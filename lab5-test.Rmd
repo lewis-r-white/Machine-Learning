@@ -296,7 +296,7 @@ tracks_recipe <- recipe(listener ~ ., data = tracks_train) %>%
 
 ### KNN Model
 
-```{r spec_with_tuning}
+```{r}
 # Define our KNN model with tuning
 knn_spec_tune <- nearest_neighbor(neighbor = tune()) %>%
 set_mode("classification") %>%
@@ -335,18 +335,10 @@ final_wf <-
   wf_knn_tune %>%
   finalize_workflow(select_best(fit_knn_cv))
 
-# Check out the final workflow object
-final_wf
-
 # Fitting our final workflow
 final_fit <- final_wf %>%
   fit(data = tracks_train)
 
-# Examine the final workflow
-final_fit
-```
-
-```{r}
 #generating predictions using the model on the test data
 tracks_pred <- final_fit %>% predict(new_data = tracks_test)
 
@@ -357,6 +349,7 @@ final_fit <- final_wf %>% last_fit(tracks_split)
 
 # Collect metrics on the test data!
 final_fit %>% collect_metrics()
+
 ```
 
 ### Decision Tree Approach
@@ -370,9 +363,9 @@ tree_spec_tune <- decision_tree(
   set_engine("rpart") %>%
   set_mode("classification")
 
+#create a grid of options for tuning purposes so we can identify the optimal value of hyperparameters 
 
-tree_grid <- grid_regular(cost_complexity(), tree_depth(), min_n(), levels = 5) #grid_regular shows grid of different input tuning options
-#levels says how many combinations we should try. 
+tree_grid <- grid_regular(cost_complexity(), tree_depth(), min_n(), levels = 5) #grid_regular shows grid of different input tuning options while levels says how many combinations we should try. 
 
 tree_grid  #125 options 
 ```
@@ -385,9 +378,7 @@ wf_tree_tune <- workflow() %>%
   
 
 #workflow pulls together the specification. and then we can fit on the workflow. you could fit the wf_tree_tune 
-```
 
-```{r}
 #set up k-fold cv. This can be used for all the algorithms. I switch to 5 fold CV instead of 10 (used in KNN above) for computation speed. 
 listener_cv <- tracks_train %>% vfold_cv(v=5) #creating 5 folds cross validation 
 listener_cv
@@ -397,6 +388,7 @@ listener_cv
 doParallel::registerDoParallel() #build trees in parallel
 #200s
 
+#get the results of the tuning 
 tree_rs <- tune_grid(
   wf_tree_tune,
   listener ~ ., #function 
@@ -409,21 +401,18 @@ tree_rs
 ```
 
 ```{r}
+#Plot the tuning results to visualize which hyperparameter values work best
 autoplot(tree_rs) + theme_light()
-```
 
-```{r select_hyperparam}
 show_best(tree_rs)
 select_best(tree_rs)
-```
 
-```{r final_tree_spec}
+#picking the best model for the final model
 final_tree <- finalize_model(tree_spec_tune, select_best(tree_rs))
 ```
 
-This model has not been fit yet though.
-
-```{r final_tree_fit}
+```{r}
+#Fit the model on the test data 
 final_tree_fit <- last_fit(final_tree, listener ~., tracks_split)
 
 final_tree_fit$.predictions
@@ -437,13 +426,12 @@ bag_spec_tune <- bag_tree(cost_complexity = tune(),
                           tree_depth = tune(),
                           min_n = tune()) %>%
   set_mode("classification") %>%
-  set_engine("rpart", times = 50)
+  set_engine("rpart", times = 50) #50 trees in a bag
 
+#create tuning grid for hyperparamters 
 bag_grid <- grid_regular(cost_complexity(), tree_depth(), min_n(), levels = 5)
 
-bag_grid
-
-
+#make workflow for bagging
 wf_bag_tune <- workflow() %>% 
   add_recipe(tracks_recipe) %>%
   add_model(bag_spec_tune)
@@ -451,6 +439,7 @@ wf_bag_tune <- workflow() %>%
 doParallel::registerDoParallel() #build trees in parallel
 #200s
 
+#find results of the tuning process 
 bag_rs <- tune_grid(
   bag_spec_tune,
   listener ~ ., #function 
@@ -459,23 +448,21 @@ bag_rs <- tune_grid(
   metrics = metric_set(accuracy) #how to assess which combinations are best 
 )
 
-bag_rs
-
+#Plot the tuning results to visualize which hyperparameter values work best
 autoplot(bag_rs) + theme_light()
 
 show_best(bag_rs)
 select_best(bag_rs)
-```
 
-```{r final_tree_spec}
+#picking the best model for the final model
 final_bag <- finalize_model(bag_spec_tune, select_best(bag_rs))
 ```
 
-This model has not been fit yet though.
-
-```{r final_tree_fit}
+```{r}
+#fitting the best model on the test data
 final_bag_fit <- last_fit(final_bag, listener ~., tracks_split)
 
+#checking out the predictions
 final_bag_fit$.predictions
 ```
 
@@ -493,7 +480,8 @@ Use appropriate performance evaluation metric(s) for this classification task. A
 
 ```{r}
 set.seed(123)
-# Bagging specifications
+
+#setting up the random forest specification
 forest_spec_tune <- 
   rand_forest(min_n = tune(),
   mtry = tune(),
@@ -501,16 +489,17 @@ forest_spec_tune <-
   set_engine("ranger") %>%
   set_mode("classification")
 
+#create grid for tuning min_n and the mtry value
 forest_grid <- grid_regular(mtry(c(1,13)), min_n(), levels = 5)
 
-forest_grid
-
+#create a workflow for the random forests
 wf_forest_tune <- workflow() %>% 
   add_recipe(tracks_recipe) %>%
   add_model(forest_spec_tune)
 
 doParallel::registerDoParallel() #build forest in parallel
 
+#get results of the tuning to try and find optimal model
 forest_rs <- tune_grid(
   forest_spec_tune,
   listener ~ ., 
@@ -519,19 +508,21 @@ forest_rs <- tune_grid(
   metrics = metric_set(accuracy) #how to assess which combinations are best 
 )
 
-forest_rs
-
+#Plot the tuning results to visualize which hyperparameter values work best
 autoplot(forest_rs) + theme_light()
 
 show_best(bag_rs)
 select_best(bag_rs)
+
+#picking the best model for the final model
+final_forest <- finalize_model(forest_spec_tune, select_best(forest_rs))
 ```
 
-```{r final_tree_spec}
-final_forest <- finalize_model(forest_spec_tune, select_best(forest_rs))
-
+```{r}
+#fitting the optimal model on the test data
 final_forest_fit <- last_fit(final_forest, listener ~., tracks_split)
 
+#check out the predictions and metrics 
 final_forest_fit$.predictions
 final_forest_fit$.metrics
 ```
