@@ -92,9 +92,13 @@ These track audio features are the predictors we are interested in, but this dat
 ```{r}
 #selecting the track id and track name from liked tracks so I can use left_join and only add the track name to the audio features data set
 liked_tracks_join <- liked_tracks %>%
-  select(track.id, track.name)
+  select(track.id, track.name, track.artists) %>%
+  mutate(primary_artist = unlist(lapply(liked_tracks$track.artists, function(x) x$name[1]))) %>%
+  select(-track.artists)
 
-#add the track name to the audio features data frame 
+
+
+#add the track name and artist to the audio features data frame 
 liked_tracks_full <- left_join(my_tracks_audio_feats, liked_tracks_join, by = c("id" = "track.id"))
 
 #save this data frame as a CVS so it can be shared with others
@@ -126,22 +130,22 @@ For example: What are the most danceable tracks in your dataset? What are some d
 ```{r}
 # names(lewis_liked_tracks)  #for checking out column names
 lewis_liked_tracks %>%
-  select(danceability, track.name) %>%
+  select(danceability, track.name, primary_artist) %>%
   arrange(-danceability) %>%
   head(5)
   
 lewis_liked_tracks %>%
-  select(danceability, track.name) %>%
+  select(danceability, track.name, primary_artist) %>%
   arrange(danceability) %>%
   head(5)
 
 lewis_liked_tracks %>%
-  select(speechiness, track.name) %>%
+  select(speechiness, track.name, primary_artist) %>%
   arrange(-speechiness) %>%
   head(5)
   
 lewis_liked_tracks %>%
-  select(speechiness, track.name) %>%
+  select(speechiness, track.name, primary_artist) %>%
   arrange(speechiness) %>%
   head(5)
 ```
@@ -213,7 +217,8 @@ ggplot(data = all_tracks, aes(x = valence, y = energy, color = listener)) +
 ## PLOTLY SHOWING VALENCE
 plot_ly(data = all_tracks,
         x = ~valence, y = ~energy, color = ~listener, type = "scatter", mode = "markers",
-        text = paste("Track Name:", all_tracks$track.name, "<br>", 
+        text = paste("Track Name:", all_tracks$track.name, "<br>",
+                     "Primary Artist:", all_tracks$primary_artist, "<br>",
                      "Valence:", all_tracks$valence, "<br>", 
                      "Energy:", all_tracks$energy, "<br>",
                      "Listener:", all_tracks$listener)) %>%
@@ -233,9 +238,9 @@ Make sure to use appropriate resampling to select the best version of each algor
 
 ```{r}
 all_tracks_knn <- all_tracks %>% mutate_if(is.ordered, .funs = factor, ordered = F) %>%
-  select(-track.name, -text)
-
+  select(-track.name, -primary_artist)
 # We need to create a recipe and do the pre-processing by converting dummy coding the nominal variables and normalizing the numeric variables.
+
 
 #pre-processing
 knn_rec <- recipe(listener ~ ., data = all_tracks_knn) %>%
@@ -332,6 +337,66 @@ final_fit <- final_wf %>% last_fit(tracks_split)
 # Collect metrics on the test data!
 final_fit %>% collect_metrics()
 ```
+
+### Decision Tree Approach
+
+
+```{r}
+#new spec, tell the model that we are tuning hyperparams
+tree_spec_tune <- decision_tree(
+  cost_complexity = tune(),   #tune() asks R to try a nunch of different parameters. 
+  tree_depth = tune(),
+  min_n = tune()) %>%
+  set_engine("rpart") %>%
+  set_mode("classification")
+
+
+tree_grid <- grid_regular(cost_complexity(), tree_depth(), min_n(), levels = 5) #grid_regular shows grid of different input tuning options
+#levels says how many combinations we should try. 
+
+tree_grid  #125 options 
+```
+
+```{r}
+wf_tree_tune <- workflow() %>%
+  add_recipe(knn_rec) %>%  #when you add recipe into workflow, it automatically will prep and bake when necessary. 
+  add_model(tree_spec_tune)
+
+#workflow pulls together the specification. and then we can fit on the workflow. you could fit the wf_tree_tune 
+```
+
+```{r}
+#set up k-fold cv. This can be used for all the algorithms
+
+genre_cv = genre_train %>% vfold_cv(v=5) #creating 5 folds cross validation 
+genre_cv
+```
+
+```{r}
+doParallel::registerDoParallel() #build trees in parallel
+#200s
+
+tree_rs <- tune_grid(
+  tree_spec_tune, #model specification 
+  genre ~ ., #function 
+  resamples = genre_cv, #resamples to use
+  grid = tree_grid, #grid to try
+  metrics = metric_set(accuracy) #how to assess which combinations are best 
+)
+
+tree_rs
+```
+
+```{r}
+autoplot(tree_rs) + theme_light()
+```
+
+```{r select_hyperparam}
+show_best(tree_rs)
+select_best(tree_rs)
+```
+
+
 
 ### Decision Tree Approach
 
@@ -450,8 +515,41 @@ confusionMatrix(
 #The model is not great considering that guessing Lewis as the listener for each song would result in a 70% accuracy due to the class imbalance. Additionally, the accuracy when training was 0.79. I think it's possible that we overfit the model and a higher cp should have been used. 
 ```
 
-**Option 2: Data preparation**
 
-Download the Spotify dataset from <https://www.kaggle.com/datasets/mrmorj/dataset-of-songs-in-spotify>
+#Now with an added random forest component and some clarification your task.
 
-Inspect the data. Choose two genres you'd like to use for the classification task. Filter down the data to include only the tracks of that genre.
+
+## Starting with bagged decision trees
+
+```{r}
+bag_tree(mode = "classification",
+         cost_complexity = 0,
+         tree_depth = NULL,
+         min_n = 2,
+         class_cost = NULL,
+         engine = "rpart")
+```
+
+
+
+
+Create four final candidate models:
+
+1. k-nearest neighbor 
+2. decision tree
+3. bagged tree
+    - bag_tree()
+    - Use the "times =" argument when setting the engine during model specification to specify the number of trees. The rule of thumb is that 50-500 trees is usually sufficient.  The bottom of that range should be sufficient here.  
+    
+4. random forest
+    - rand_forest()
+    - m_try() is the new hyperparameter of interest for this type of model.  Make sure to include it in your tuning process
+
+Go through the modeling process for each model: 
+* Preprocessing. You can use the same recipe for all the models you create. 
+* Resampling. Make sure to use appropriate resampling to select the best version created by each algorithm.
+* Tuning. Find the best values for each hyperparameter (within a reasonable range).
+
+Compare the performance of the four final models you have created.  
+
+Use appropriate performance evaluation metric(s) for this classification task. A table would be a good way to display your comparison.  Use at least one visualization illustrating your model results.
