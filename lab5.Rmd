@@ -262,9 +262,11 @@ plot_ly(data = all_tracks,
 ```
 
 
+
 ```{r}
+#Playing around with another visualization
 all_tracks_summary <- all_tracks %>%
-  dplyr::group_by(listener) %>% 
+  dplyr::group_by(listener) %>%
   summarize(danceability = mean(danceability),
             energy = mean(energy),
             speechiness = mean(speechiness),
@@ -275,25 +277,40 @@ all_tracks_summary <- all_tracks %>%
   rename("Elke" = "V1",
          "Lewis" = "V2")
 
-all_tracks_summary <- all_tracks_summary[-1,]
+
+all_tracks_summary <- all_tracks_summary[-1,] %>%
+  mutate(Elke = as.numeric(Elke), 
+         Elke = round(Elke, 2),
+         Lewis = as.numeric(Lewis),
+         Lewis = round(Lewis, 2))
+
+all_tracks_summary
 
 
-# Barplot
+
+library(ggtext)
+
 all_tracks_summary %>%
-  ggplot(aes(x=rowname, y=V1)) +
-    geom_segment( aes(x=rowname ,xend=rowname, y=V2, yend=V1), color="grey") +
-    geom_point(size=5, color="#69b3a2") +
-    geom_point(aes(y=V2), size=5, color="#69b3a2", alpha=0.1) +
-    coord_flip() +
-    theme_ipsum() +
-    theme(
-      panel.grid.minor.y = element_blank(),
-      panel.grid.major.y = element_blank(),
-      axis.text = element_text( size=48 )
-    ) +
-    ylim(0,20) +
-    ylab("mark") +
-    xlab("")
+  rownames_to_column() %>%
+  arrange(Elke) %>%
+  mutate(rowname = factor(rowname, rowname)) %>%
+  ggplot(aes(x = rowname, y = Elke)) +
+  geom_segment(aes(x = rowname ,xend = rowname, y = Lewis, yend = Elke), color = "grey") +
+  geom_point(size = 5, color = "#b0484f") +
+  geom_point(aes(y = Lewis), size = 5, color = "#9C8CEC") +
+  coord_flip() +
+  theme_minimal() +
+  theme(
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.y = element_blank(),
+    axis.text.x = element_text(size = 10, angle = 0, hjust = 1),
+    axis.text.y = element_text(size = 10),
+    plot.title = element_markdown(size = 14)
+  ) +
+  labs(x = "Music Metric",
+       y = "Music Metric Score",
+       title = "**Comparing <span style='color:#b0484f'>Elke's</span> Average Music Metric Values with <span style='color:#9C8CEC'>Mine</span>**")
+
 ```
 
 #### Statistical comparison of variables
